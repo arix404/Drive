@@ -1,51 +1,82 @@
 # Dataset: uber.csv (or change FILE to your downloaded CSV name)
+!mamba install pandas
+!mamba install numpy
+!mamba install scikit-learn
+!mamba install matplotlib
+!mamba install seaborn
 import pandas as pd
+import numpy as np
+import seaborn as sns
 import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LinearRegression
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.metrics import r2_score, mean_squared_error
-import numpy as np
+from sklearn.metrics import mean_squared_error, r2_score
 
-FILE = "uber.csv"
-df = pd.read_csv(FILE)
+df = pd.read_csv("uber.csv")
+df.head()
+print(df.info())
+print("-----------------------")
+#count of missing values
+print(df.isnull().sum())
 df = df.dropna()
-df = df[(df["fare_amount"] > 0) & (df["fare_amount"] < 200)]
-df = df[(df["passenger_count"] > 0) & (df["passenger_count"] <= 6)]
 
-# Haversine distance from pickup and drop coordinates
-def distance(row):
-    lat1, lon1, lat2, lon2 = map(np.radians, [
-        row["pickup_latitude"], row["pickup_longitude"],
-        row["dropoff_latitude"], row["dropoff_longitude"]])
-    dlat, dlon = lat2-lat1, lon2-lon1
-    a = np.sin(dlat/2)**2 + np.cos(lat1)*np.cos(lat2)*np.sin(dlon/2)**2
-    return 6371 * 2 * np.arcsin(np.sqrt(a))
 
-df = df[(df["pickup_latitude"].between(-90,90)) &
-        (df["dropoff_latitude"].between(-90,90)) &
-        (df["pickup_longitude"].between(-180,180)) &
-        (df["dropoff_longitude"].between(-180,180))]
-df["distance_km"] = df.apply(distance, axis=1)
-df = df[df["distance_km"] < 100]
+df["distance"] = (
+    ((df['dropoff_latitude'] - df['pickup_latitude'])**2 +
+     (df['dropoff_longitude'] - df['pickup_longitude'])**2) * 0.5
+)
 
-print("Rows after preprocessing:", len(df))
-print("Outlier check using boxplot")
-plt.boxplot(df["fare_amount"])
-plt.title("Fare outliers")
+# Filter for reasonable fare, passenger count, and distance
+df = df[(df['fare_amount'] > 0) & (df['fare_amount'] < 100)]
+df = df[(df['passenger_count'] > 0) & (df['passenger_count'] <= 6)]
+df = df[df['distance'] < 5]
+
+
+# Extract time features
+df['pickup_datetime'] = pd.to_datetime(df['pickup_datetime'])
+df['hour'] = df['pickup_datetime'].dt.hour
+df['day_of_week'] = df['pickup_datetime'].dt.dayofweek
+
+# Boxplot for fare amount
+sns.boxplot(x=df['fare_amount'])
+plt.title("Boxplot for Fare Amount (Outliers)")
 plt.show()
-print("Correlation:\n", df[["fare_amount","distance_km","passenger_count"]].corr())
 
-X = df[["distance_km", "passenger_count"]]
-y = df["fare_amount"]
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+# Correlation heatmap
+corr = df[['fare_amount', 'distance', 'passenger_count', 'hour', 'day_of_week']].corr()
+sns.heatmap(corr, annot=True, cmap='coolwarm')
+plt.title("Correlation Matrix")
+plt.show()
 
-models = {
-    "Linear Regression": LinearRegression(),
-    "Random Forest": RandomForestRegressor(n_estimators=100, random_state=42)
-}
-for name, model in models.items():
-    model.fit(X_train, y_train)
-    pred = model.predict(X_test)
-    rmse = np.sqrt(mean_squared_error(y_test, pred))
-    print(name, "R2 =", round(r2_score(y_test, pred), 3), "RMSE =", round(rmse, 3))
+
+# Feature and target selection
+X = df[['distance', 'passenger_count', 'hour', 'day_of_week']]
+y = df['fare_amount']
+
+# Train-test split
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42
+)
+
+# Linear Regression
+lr = LinearRegression()
+lr.fit(X_train, y_train)
+y_pred_lr = lr.predict(X_test)
+
+
+
+# Random Forest
+rf = RandomForestRegressor(n_estimators=100, random_state=42)
+rf.fit(X_train, y_train)
+y_pred_rf = rf.predict(X_test)
+
+# Evaluation function
+def evaluate(y_true, y_pred, model_name):
+    rmse = np.sqrt(mean_squared_error(y_true, y_pred))
+    r2 = r2_score(y_true, y_pred)
+    print(f"{model_name} Results:")
+    print(f"  R² Score: {r2:.4f}")
+    print(f"  RMSE: {rmse:.4f}\n")
+evaluate(y_test, y_pred_lr, "Linear Regression")
+evaluate(y_test, y_pred_rf, "Random Forest Regression")
